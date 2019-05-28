@@ -1,0 +1,95 @@
+package com.ch2.forkjoin.tools.semaphore;
+
+import tools.SleepTools;
+
+import java.sql.Connection;
+import java.util.LinkedList;
+import java.util.Random;
+import java.util.concurrent.Semaphore;
+
+/**
+ * @author sxylml
+ * @Date : 2019/5/25 11:36
+ * @Description: 演示Semaphore用法，一个数据库连接池的实现
+ */
+public class DBPoolNoUseless {
+
+    private final static int POOL_SIZE = 10;
+    private final Semaphore useful;
+    /**
+     * 存放数据库连接的容器
+     */
+    private static LinkedList<Connection> pool = new LinkedList<Connection>();
+
+    /**
+     *
+     *初始化池
+     */
+    static {
+        for (int i = 0; i < POOL_SIZE; i++) {
+            pool.addLast(SqlConnectImpl.fetchConnection());
+        }
+    }
+
+    public DBPoolNoUseless() {
+        this.useful = new Semaphore(10);
+    }
+
+
+    /*归还连接*/
+    public void returnConnect(Connection connection) throws InterruptedException {
+        if (connection != null) {
+            System.out.println("当前有" + useful.getQueueLength() + "个线程等待数据库连接!!"
+                    + "可用连接数：" + useful.availablePermits());
+            synchronized (pool) {
+                pool.addLast(connection);
+            }
+            useful.release();
+        }
+    }
+
+
+    /*从池子拿连接*/
+    public Connection takeConnect() throws InterruptedException {
+        useful.acquire();
+        Connection connection;
+        synchronized (pool) {
+            connection = pool.removeFirst();
+        }
+        return connection;
+    }
+
+    private static DBPoolNoUseless dbPoolNoUseless = new DBPoolNoUseless();
+
+    private static class BusiThread extends Thread {
+        @Override
+        public void run() {
+            /**
+             *让每个线程持有连接的时间不一样
+             */
+
+            Random r = new Random();
+            long start = System.currentTimeMillis();
+            try {
+               Connection connection = dbPoolNoUseless.takeConnect();
+                System.out.println("Thread_" + Thread.currentThread().getId()
+                        + "_获取数据库连接共耗时【" + (System.currentTimeMillis() - start) + "】ms.");
+                /**
+                 * 模拟业务操作，线程持有连接查询数据
+                 */
+                SleepTools.ms(100 + r.nextInt(100));
+                System.out.println("查询数据完成，归还连接！");
+                dbPoolNoUseless.returnConnect(new SqlConnectImpl());
+            } catch (InterruptedException e) {
+            }
+        }
+    }
+
+    public static void main(String[] args) {
+        for (int i = 0; i < 50; i++) {
+            Thread thread = new BusiThread();
+            thread.start();
+        }
+    }
+
+}
